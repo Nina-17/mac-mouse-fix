@@ -119,6 +119,16 @@ import ReactiveSwift
     private var buttonKillSwitch = false
     private var scrollKillSwitch = false
     
+    /// Derived from: General Config & HelperState (frontmost app)
+    ///     Per-app exclusion. `General.excludedApps` maps bundleIDs to `{ buttons: Bool, scroll: Bool }`. While the frontmost app is in there, the respective features are turned off just like with the killSwitches.
+    private var excludedApps = NSDictionary()
+    private var appExcludesButtons = false
+    private var appExcludesScroll = false
+    
+    /// Effective killSwitches
+    private var buttonsAreOff: Bool { buttonKillSwitch || appExcludesButtons }
+    private var scrollIsOff: Bool { scrollKillSwitch || appExcludesScroll }
+    
     //
     // MARK: Debug
     //
@@ -254,10 +264,16 @@ import ReactiveSwift
         /// Get raw
         let btn = generalConfig.object(forKey: "buttonKillSwitch") as! Bool
         let scrl = generalConfig.object(forKey: "scrollKillSwitch") as! Bool
+        let excluded = generalConfig.object(forKey: "excludedApps") as? NSDictionary ?? NSDictionary() /// Optional, since configs from before this feature don't have this key
         
         /// Update state & set didChange
         
         var didChange = false
+        
+        if !excluded.isEqual(excludedApps) {
+            excludedApps = excluded
+            if updateAppExclusion() { didChange = true }
+        }
         
         if btn != buttonKillSwitch {
             buttonKillSwitch = btn
@@ -285,6 +301,53 @@ import ReactiveSwift
                 New state - btn: \(btn), scrl: \(scrl)
                 """)
         }
+    }
+    
+    //
+    // MARK: Per-app exclusion
+    //
+    
+    @objc func frontmostAppChanged() {
+        
+        assertRunLoop(GlobalEventTapThread.runLoop())
+        readsAndWritesState_Begin(readWriteTracker); defer { readsAndWritesState_End(readWriteTracker) }
+        
+        if updateAppExclusion() {
+            
+            /// Call togglers
+            
+            toggleKbModTap()
+            toggleBtnModProcessing()
+            
+            toggleScrollTap()
+            toggleButtonTap()
+            togglePointingTap(modifications: nil)
+            
+            /// Debug
+            logWithState("""
+                Toggled due to frontmost app change.
+                New state - btn: \(appExcludesButtons), scrl: \(appExcludesScroll)
+                """)
+        }
+    }
+    
+    private func updateAppExclusion() -> Bool {
+        
+        /// Recalculates `appExcludesButtons` and `appExcludesScroll` from `excludedApps` and the frontmost app. Returns true if they changed.
+        
+        var btn = false
+        var scrl = false
+        
+        if let bundleID = HelperState.shared.frontmostAppBundleID,
+           let exclusion = excludedApps.object(forKey: bundleID) as? NSDictionary {
+            btn  = exclusion.object(forKey: "buttons") as? Bool ?? false
+            scrl = exclusion.object(forKey: "scroll") as? Bool ?? false
+        }
+        
+        let didChange = btn != appExcludesButtons || scrl != appExcludesScroll
+        appExcludesButtons = btn
+        appExcludesScroll = scrl
+        return didChange
     }
     
     //
@@ -503,9 +566,9 @@ import ReactiveSwift
         
         var priority = kMFModifierPriorityUnused
         
-        let someKbModReallyModifiesScroll   = somekbModModifiesScroll             && someDeviceHasScroll          && !scrollKillSwitch
+        let someKbModReallyModifiesScroll   = somekbModModifiesScroll             && someDeviceHasScroll          && !scrollIsOff
         let someKbModReallyModifiesPointing = somekbModModifiesPointing           && someDeviceHasPointing        && true
-        let someKbModReallyModifiesButtons  = somekbModModifiesButtonOnSomeDevice && someDeviceHasUsableButtons   && !buttonKillSwitch
+        let someKbModReallyModifiesButtons  = somekbModModifiesButtonOnSomeDevice && someDeviceHasUsableButtons   && !buttonsAreOff
         
         if someKbModReallyModifiesScroll || someKbModReallyModifiesPointing || someKbModReallyModifiesButtons {
             
@@ -530,9 +593,9 @@ import ReactiveSwift
         
         var priority = kMFModifierPriorityUnused
         
-        let someBtnReallyModifiesScroll      = someButtonModifiesScroll             && someDeviceHasScroll        && !scrollKillSwitch      ;
+        let someBtnReallyModifiesScroll      = someButtonModifiesScroll             && someDeviceHasScroll        && !scrollIsOff           ;
         let someBtnReallyModifiesPointing    = someButtonModifiesPointing           && someDeviceHasPointing      && true                   ;
-        let someBtnReallyModifiesButtons     = someButtonModifiesButtonOnSomeDevice && someDeviceHasUsableButtons && !buttonKillSwitch      ; /// `!buttonKillSwitch` is redundant here ([Mar 2025]: Why?), but makes it more readable? || [Mar 2025]: someDeviceHasUsableButtons might also be redundant, because someButtonModifiesButtonOnSomeDevice might already capture that.
+        let someBtnReallyModifiesButtons     = someButtonModifiesButtonOnSomeDevice && someDeviceHasUsableButtons && !buttonsAreOff         ; /// `!buttonKillSwitch` is redundant here ([Mar 2025]: Why?), but makes it more readable? || [Mar 2025]: someDeviceHasUsableButtons might also be redundant, because someButtonModifiesButtonOnSomeDevice might already capture that.
         
         if someBtnReallyModifiesScroll || someBtnReallyModifiesPointing || someBtnReallyModifiesButtons {
             
@@ -552,7 +615,7 @@ import ReactiveSwift
     
     private func toggleScrollTap() {
         
-        if isLockedDown || !userIsActive || scrollKillSwitch {
+        if isLockedDown || !userIsActive || scrollIsOff {
             Scroll.stopReceiving()
             return
         }
@@ -566,7 +629,7 @@ import ReactiveSwift
     
     private func toggleButtonTap() {
     
-        if isLockedDown || !userIsActive || buttonKillSwitch {
+        if isLockedDown || !userIsActive || buttonsAreOff {
             ButtonInputReceiver.stop()
             return
         }
@@ -590,7 +653,7 @@ import ReactiveSwift
     
     private func togglePointingTap(modifications modificationsArg: NSDictionary?) {
         
-        if isLockedDown || !userIsActive { /// Not sure if necessary
+        if isLockedDown || !userIsActive || appExcludesButtons { /// Not sure if necessary || `appExcludesButtons`: Click and Drag is a button feature, so excluding buttons for an app turns it off, too.
             ModifiedDrag.deactivate(withCancel: false)
             return
         }

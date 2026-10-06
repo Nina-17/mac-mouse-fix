@@ -10,6 +10,7 @@ import ReactiveSwift
 import ReactiveCocoa
 import Sparkle
 import ServiceManagement
+import UniformTypeIdentifiers
 
 class GeneralTabController: NSViewController {
     
@@ -234,6 +235,16 @@ class GeneralTabController: NSViewController {
         updatesToggle.reactive.boolValue <~ checkForUpdates
         betaToggle.reactive.boolValue <~ getBetaVersions
         
+        /// Add 'Excluded Apps...' button
+        ///     Created in code instead of in the storyboard so we don't have to edit the storyboard by hand.
+        let excludedAppsButton = NSButton(title: MFLocalizedString("excluded-apps.open-button", comment: "Button in the General tab that opens the per-app exclusion sheet"), target: self, action: #selector(openExcludedApps))
+        excludedAppsButton.bezelStyle = .rounded
+        excludedAppsButton.setAccessibilityIdentifier("axExcludedAppsButton")
+        mainHidableSection.addArrangedSubview(excludedAppsButton)
+        if let previous = mainHidableSection.arrangedSubviews.dropLast().last {
+            mainHidableSection.setCustomSpacing(12, after: previous)
+        }
+        
         mainHidableSection.reactive.isCollapsed <~ EnabledState.shared.producer.negate()
         updatesExtraSection.reactive.isCollapsed <~ checkForUpdates.producer.negate()
         
@@ -284,6 +295,226 @@ class GeneralTabController: NSViewController {
                 SUUpdater.shared().checkForUpdatesInBackground()
             }
         }
+    }
+}
+
+// MARK: Excluded apps
+
+extension GeneralTabController {
+    @objc func openExcludedApps() {
+        self.presentAsSheet(ExcludedAppsViewController())
+    }
+}
+
+class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+    
+    /// Lets the user choose apps in which some features of Mac Mouse Fix are turned off.
+    /// Stored at `General.excludedApps` as `{ bundleID: { buttons: Bool, scroll: Bool } }`. The Helper reads this in `SwitchMaster`.
+    
+    private struct Entry {
+        var bundleID: String
+        var buttons: Bool
+        var scroll: Bool
+    }
+    
+    private var entries: [Entry] = []
+    private let tableView = NSTableView()
+    private let removeButton = NSButton()
+    
+    private static let colApp = NSUserInterfaceItemIdentifier("app")
+    private static let colButtons = NSUserInterfaceItemIdentifier("buttons")
+    private static let colScroll = NSUserInterfaceItemIdentifier("scroll")
+    
+    // MARK: Load & store
+    
+    private func loadEntries() {
+        entries = []
+        guard let dict = config("General.excludedApps") as? NSDictionary else { return }
+        for (key, value) in dict {
+            guard let bundleID = key as? String, let value = value as? NSDictionary else { continue }
+            entries.append(Entry(bundleID: bundleID,
+                                 buttons: value.object(forKey: "buttons") as? Bool ?? false,
+                                 scroll: value.object(forKey: "scroll") as? Bool ?? false))
+        }
+        entries.sort { Self.displayName($0.bundleID).localizedCaseInsensitiveCompare(Self.displayName($1.bundleID)) == .orderedAscending }
+    }
+    
+    private func storeEntries() {
+        let dict = NSMutableDictionary()
+        for e in entries {
+            dict[e.bundleID] = NSMutableDictionary(dictionary: ["buttons": e.buttons, "scroll": e.scroll])
+        }
+        setConfig("General.excludedApps", dict)
+        commitConfig()
+    }
+    
+    // MARK: App info
+    
+    private static func appURL(_ bundleID: String) -> URL? {
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+    }
+    private static func displayName(_ bundleID: String) -> String {
+        guard let url = appURL(bundleID) else { return bundleID } /// App is not installed anymore
+        return FileManager.default.displayName(atPath: url.path)
+    }
+    private static func icon(_ bundleID: String) -> NSImage? {
+        guard let url = appURL(bundleID) else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+    
+    // MARK: View
+    
+    override func loadView() {
+        
+        let title = NSTextField(labelWithString: MFLocalizedString("excluded-apps.title", comment: "Title of the per-app exclusion sheet"))
+        title.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+        
+        let body = NSTextField(wrappingLabelWithString: MFLocalizedString("excluded-apps.body", comment: "Explanation at the top of the per-app exclusion sheet"))
+        body.textColor = .secondaryLabelColor
+        body.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        
+        /// Table
+        let appColumn = NSTableColumn(identifier: Self.colApp)
+        appColumn.title = MFLocalizedString("excluded-apps.column.app", comment: "Column header: the app")
+        appColumn.width = 220
+        let buttonsColumn = NSTableColumn(identifier: Self.colButtons)
+        buttonsColumn.title = MFLocalizedString("excluded-apps.column.buttons", comment: "Column header: checkbox to turn off button remapping (incl. Click and Drag) in this app")
+        buttonsColumn.width = 70
+        let scrollColumn = NSTableColumn(identifier: Self.colScroll)
+        scrollColumn.title = MFLocalizedString("excluded-apps.column.scroll", comment: "Column header: checkbox to turn off scroll enhancements in this app")
+        scrollColumn.width = 70
+        for c in [appColumn, buttonsColumn, scrollColumn] { tableView.addTableColumn(c) }
+        tableView.rowHeight = 24
+        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.allowsMultipleSelection = true
+        tableView.dataSource = self
+        tableView.delegate = self
+        
+        let scrollView = NSScrollView()
+        scrollView.documentView = tableView
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.heightAnchor.constraint(equalToConstant: 200).isActive = true
+        
+        /// + / - buttons
+        let addButton = NSButton(image: NSImage(named: NSImage.addTemplateName)!, target: self, action: #selector(addApps))
+        addButton.bezelStyle = .smallSquare
+        removeButton.image = NSImage(named: NSImage.removeTemplateName)
+        removeButton.bezelStyle = .smallSquare
+        removeButton.target = self
+        removeButton.action = #selector(removeApps)
+        removeButton.isEnabled = false
+        let plusMinus = NSStackView(views: [addButton, removeButton])
+        plusMinus.spacing = 0
+        
+        /// Done
+        let doneButton = NSButton(title: MFLocalizedString("excluded-apps.done", comment: "Button that closes the per-app exclusion sheet"), target: self, action: #selector(done))
+        doneButton.keyEquivalent = "\r"
+        
+        let bottomRow = NSStackView(views: [plusMinus, NSView(), doneButton])
+        bottomRow.distribution = .fill
+        
+        let stack = NSStackView(views: [title, body, scrollView, bottomRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        for v in [body, scrollView, bottomRow] {
+            v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        }
+        stack.widthAnchor.constraint(equalToConstant: 440).isActive = true
+        
+        self.view = stack
+        
+        loadEntries()
+        tableView.reloadData()
+    }
+    
+    // MARK: Actions
+    
+    @objc private func addApps() {
+        
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        if #available(macOS 11.0, *) {
+            panel.allowedContentTypes = [UTType.application]
+        } else {
+            panel.allowedFileTypes = ["com.apple.application"]
+        }
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        
+        guard let window = self.view.window else { return }
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK else { return }
+            for url in panel.urls {
+                guard let bundleID = Bundle(url: url)?.bundleIdentifier else { continue } /// Apps without bundleID can't be excluded
+                if self.entries.contains(where: { $0.bundleID == bundleID }) { continue }
+                self.entries.append(Entry(bundleID: bundleID, buttons: true, scroll: true)) /// Turn off everything by default
+            }
+            self.storeEntries()
+            self.tableView.reloadData()
+        }
+    }
+    
+    @objc private func removeApps() {
+        let rows = tableView.selectedRowIndexes
+        guard !rows.isEmpty else { return }
+        for i in rows.reversed() { entries.remove(at: i) }
+        storeEntries()
+        tableView.reloadData()
+    }
+    
+    @objc private func toggleFeature(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard row >= 0 && row < entries.count else { return }
+        let on = sender.state == .on
+        if sender.identifier == Self.colButtons {
+            entries[row].buttons = on
+        } else {
+            entries[row].scroll = on
+        }
+        storeEntries()
+    }
+    
+    @objc private func done() {
+        self.dismiss(nil)
+    }
+    
+    // MARK: Table
+    
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        return entries.count
+    }
+    
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        
+        guard let column = tableColumn?.identifier else { return nil }
+        let entry = entries[row]
+        
+        if column == Self.colApp {
+            let imageView = NSImageView(image: Self.icon(entry.bundleID) ?? NSImage())
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.widthAnchor.constraint(equalToConstant: 18).isActive = true
+            imageView.heightAnchor.constraint(equalToConstant: 18).isActive = true
+            let label = NSTextField(labelWithString: Self.displayName(entry.bundleID))
+            label.lineBreakMode = .byTruncatingTail
+            label.toolTip = entry.bundleID
+            let cell = NSStackView(views: [imageView, label])
+            cell.spacing = 6
+            return cell
+        } else {
+            let checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleFeature(_:)))
+            checkbox.identifier = column
+            checkbox.state = (column == Self.colButtons ? entry.buttons : entry.scroll) ? .on : .off
+            return checkbox
+        }
+    }
+    
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        removeButton.isEnabled = !tableView.selectedRowIndexes.isEmpty
     }
 }
 

@@ -49,6 +49,8 @@
 		<true/>
 		<key>lockPointerDuringDrag</key>
 		<false/>
+		<key>excludedApps</key>
+		<dict/>
 	</dict>
 	<key>Pointer</key>
 	<dict>

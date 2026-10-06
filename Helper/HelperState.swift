@@ -23,6 +23,7 @@ import CoreGraphics
     override init() {
         super.init()
         initUserIsActive()
+        initFrontmostApp()
         MFCFRunLoopPerform(GlobalEventTapThread.runLoop(), nil) { /// [Sep 2026] Can't call non-deferred since it causes HelperState.shared -> HelperState.init -> HelperState.shared recursion which deadlocks or whatever. Been this way before [Sep 2026] 'No more dispatch queues' refactor, so should be fine.
             SwitchMaster.shared.helperStateChanged()
         }
@@ -62,6 +63,36 @@ import CoreGraphics
             }
         }
         
+    }
+    
+    // MARK: Frontmost app
+    /// Used for per-app exclusion (`General.excludedApps`). See `SwitchMaster.frontmostAppChanged()`
+
+    private var _frontmostAppBundleID: String? = nil
+    private(set) var frontmostAppBundleID: String? {
+        get {
+            assertRunLoop(GlobalEventTapThread.runLoop())
+            return _frontmostAppBundleID
+        }
+        set {
+            _frontmostAppBundleID = newValue
+        }
+    }
+    private func initFrontmostApp() {
+        
+        /// Init frontmostAppBundleID
+        _frontmostAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        
+        /// Listen to app switches and update frontmostAppBundleID
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: nil) { notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleID = app?.bundleIdentifier
+            MFCFRunLoopPerform(GlobalEventTapThread.runLoop(), nil) {
+                if self.frontmostAppBundleID == bundleID { return }
+                self.frontmostAppBundleID = bundleID
+                SwitchMaster.shared.frontmostAppChanged()
+            }
+        }
     }
     
     private func userIsActive_Uncached() -> Bool { /// Load `userIsActive` value directly from system
