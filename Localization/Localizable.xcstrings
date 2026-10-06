@@ -1,6 +1,38 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "excluded-apps.column.smooth" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smooth Scrolling"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "平滑滚动"
+          }
+        }
+      }
+    },
+    "excluded-apps.column.smooth.hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only turn off smooth scrolling. Each wheel tick scrolls like it would without Mac Mouse Fix, while reverse direction and other scroll settings stay on."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只关闭平滑滚动：滚轮每一格的滚动和没装 Mac Mouse Fix 时一样，反转方向等其他滚动设置保持不变。"
+          }
+        }
+      }
+    },
     "excluded-apps.open-button" : {
       "localizations" : {
         "en" : {
@@ -38,13 +70,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "While one of these apps is in front, the checked features of Mac Mouse Fix are turned off."
+            "value" : "While one of these apps is in front, the checked features of Mac Mouse Fix are turned off. \"Smooth Scrolling\" keeps reverse direction and other scroll settings on."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当以下应用位于前台时，Mac Mouse Fix 中勾选的功能会被关闭。"
+            "value" : "当以下应用位于前台时，Mac Mouse Fix 中勾选的功能会被关闭。“平滑滚动”只关掉平滑效果，反转方向等滚动设置保持不变。"
           }
         }
       }

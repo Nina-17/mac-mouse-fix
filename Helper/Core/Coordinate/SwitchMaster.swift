@@ -120,10 +120,12 @@ import ReactiveSwift
     private var scrollKillSwitch = false
     
     /// Derived from: General Config & HelperState (frontmost app)
-    ///     Per-app exclusion. `General.excludedApps` maps bundleIDs to `{ buttons: Bool, scroll: Bool }`. While the frontmost app is in there, the respective features are turned off just like with the killSwitches.
+    ///     Per-app exclusion. `General.excludedApps` maps bundleIDs to `{ buttons: Bool, scroll: Bool, smooth: Bool }`. While the frontmost app is in there, the respective features are turned off just like with the killSwitches.
+    ///     `smooth` only turns off smooth scrolling (see `ScrollConfig.appDisablesSmoothing`), other scroll features like reverse direction stay on.
     private var excludedApps = NSDictionary()
     private var appExcludesButtons = false
     private var appExcludesScroll = false
+    private var appExcludesSmoothing = false
     
     /// Effective killSwitches
     private var buttonsAreOff: Bool { buttonKillSwitch || appExcludesButtons }
@@ -334,14 +336,23 @@ import ReactiveSwift
     private func updateAppExclusion() -> Bool {
         
         /// Recalculates `appExcludesButtons` and `appExcludesScroll` from `excludedApps` and the frontmost app. Returns true if they changed.
+        ///     Also applies `appExcludesSmoothing` to ScrollConfig directly, since that doesn't affect which taps are on.
         
         var btn = false
         var scrl = false
+        var smooth = false
         
         if let bundleID = HelperState.shared.frontmostAppBundleID,
            let exclusion = excludedApps.object(forKey: bundleID) as? NSDictionary {
-            btn  = exclusion.object(forKey: "buttons") as? Bool ?? false
-            scrl = exclusion.object(forKey: "scroll") as? Bool ?? false
+            btn    = exclusion.object(forKey: "buttons") as? Bool ?? false
+            scrl   = exclusion.object(forKey: "scroll") as? Bool ?? false
+            smooth = exclusion.object(forKey: "smooth") as? Bool ?? false
+        }
+        
+        if smooth != appExcludesSmoothing {
+            appExcludesSmoothing = smooth
+            ScrollConfig.setAppDisablesSmoothing(smooth)
+            Scroll.resetState() /// Stop any ongoing scroll animation, so the new setting applies from the next tick
         }
         
         let didChange = btn != appExcludesButtons || scrl != appExcludesScroll

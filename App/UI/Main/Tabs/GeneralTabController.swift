@@ -309,12 +309,13 @@ extension GeneralTabController {
 class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     
     /// Lets the user choose apps in which some features of Mac Mouse Fix are turned off.
-    /// Stored at `General.excludedApps` as `{ bundleID: { buttons: Bool, scroll: Bool } }`. The Helper reads this in `SwitchMaster`.
+    /// Stored at `General.excludedApps` as `{ bundleID: { buttons: Bool, scroll: Bool, smooth: Bool } }`. The Helper reads this in `SwitchMaster`.
     
     private struct Entry {
         var bundleID: String
         var buttons: Bool
         var scroll: Bool
+        var smooth: Bool
     }
     
     private var entries: [Entry] = []
@@ -324,6 +325,7 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
     private static let colApp = NSUserInterfaceItemIdentifier("app")
     private static let colButtons = NSUserInterfaceItemIdentifier("buttons")
     private static let colScroll = NSUserInterfaceItemIdentifier("scroll")
+    private static let colSmooth = NSUserInterfaceItemIdentifier("smooth")
     
     // MARK: Load & store
     
@@ -334,7 +336,8 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
             guard let bundleID = key as? String, let value = value as? NSDictionary else { continue }
             entries.append(Entry(bundleID: bundleID,
                                  buttons: value.object(forKey: "buttons") as? Bool ?? false,
-                                 scroll: value.object(forKey: "scroll") as? Bool ?? false))
+                                 scroll: value.object(forKey: "scroll") as? Bool ?? false,
+                                 smooth: value.object(forKey: "smooth") as? Bool ?? false))
         }
         entries.sort { Self.displayName($0.bundleID).localizedCaseInsensitiveCompare(Self.displayName($1.bundleID)) == .orderedAscending }
     }
@@ -342,7 +345,7 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
     private func storeEntries() {
         let dict = NSMutableDictionary()
         for e in entries {
-            dict[e.bundleID] = NSMutableDictionary(dictionary: ["buttons": e.buttons, "scroll": e.scroll])
+            dict[e.bundleID] = NSMutableDictionary(dictionary: ["buttons": e.buttons, "scroll": e.scroll, "smooth": e.smooth])
         }
         setConfig("General.excludedApps", dict)
         commitConfig()
@@ -376,14 +379,18 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
         /// Table
         let appColumn = NSTableColumn(identifier: Self.colApp)
         appColumn.title = MFLocalizedString("excluded-apps.column.app", comment: "Column header: the app")
-        appColumn.width = 220
+        appColumn.width = 200
         let buttonsColumn = NSTableColumn(identifier: Self.colButtons)
         buttonsColumn.title = MFLocalizedString("excluded-apps.column.buttons", comment: "Column header: checkbox to turn off button remapping (incl. Click and Drag) in this app")
         buttonsColumn.width = 70
         let scrollColumn = NSTableColumn(identifier: Self.colScroll)
         scrollColumn.title = MFLocalizedString("excluded-apps.column.scroll", comment: "Column header: checkbox to turn off scroll enhancements in this app")
         scrollColumn.width = 70
-        for c in [appColumn, buttonsColumn, scrollColumn] { tableView.addTableColumn(c) }
+        let smoothColumn = NSTableColumn(identifier: Self.colSmooth)
+        smoothColumn.title = MFLocalizedString("excluded-apps.column.smooth", comment: "Column header: checkbox to turn off only smooth scrolling in this app (reverse direction etc. stay on)")
+        smoothColumn.headerToolTip = MFLocalizedString("excluded-apps.column.smooth.hint", comment: "Tooltip for the smooth scrolling column")
+        smoothColumn.width = 90
+        for c in [appColumn, buttonsColumn, scrollColumn, smoothColumn] { tableView.addTableColumn(c) }
         tableView.rowHeight = 24
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsMultipleSelection = true
@@ -423,7 +430,7 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
         for v in [body, scrollView, bottomRow] {
             v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
         }
-        stack.widthAnchor.constraint(equalToConstant: 440).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: 520).isActive = true
         
         self.view = stack
         
@@ -452,7 +459,7 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
             for url in panel.urls {
                 guard let bundleID = Bundle(url: url)?.bundleIdentifier else { continue } /// Apps without bundleID can't be excluded
                 if self.entries.contains(where: { $0.bundleID == bundleID }) { continue }
-                self.entries.append(Entry(bundleID: bundleID, buttons: true, scroll: true)) /// Turn off everything by default
+                self.entries.append(Entry(bundleID: bundleID, buttons: true, scroll: true, smooth: false)) /// Turn off everything by default (`smooth` is redundant when `scroll` is off)
             }
             self.storeEntries()
             self.tableView.reloadData()
@@ -473,10 +480,13 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
         let on = sender.state == .on
         if sender.identifier == Self.colButtons {
             entries[row].buttons = on
-        } else {
+        } else if sender.identifier == Self.colScroll {
             entries[row].scroll = on
+        } else {
+            entries[row].smooth = on
         }
         storeEntries()
+        tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integersIn: 0..<tableView.numberOfColumns)) /// Update enabled state of the smooth checkbox
     }
     
     @objc private func done() {
@@ -508,7 +518,14 @@ class ExcludedAppsViewController: NSViewController, NSTableViewDataSource, NSTab
         } else {
             let checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleFeature(_:)))
             checkbox.identifier = column
-            checkbox.state = (column == Self.colButtons ? entry.buttons : entry.scroll) ? .on : .off
+            if column == Self.colButtons {
+                checkbox.state = entry.buttons ? .on : .off
+            } else if column == Self.colScroll {
+                checkbox.state = entry.scroll ? .on : .off
+            } else {
+                checkbox.state = entry.smooth ? .on : .off
+                checkbox.isEnabled = !entry.scroll /// When all scroll features are off, turning off smooth scrolling does nothing
+            }
             return checkbox
         }
     }

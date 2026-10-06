@@ -60,6 +60,14 @@ import Cocoa
 //        ReactiveScrollConfig.shared.handleScrollConfigChanged(newValue: shared)
         SwitchMaster.shared.scrollConfigChanged(scrollConfig: shared)
     }
+    /// Per-app exclusion of smooth scrolling
+    ///     Set by `SwitchMaster` while the frontmost app has `smooth` checked in `General.excludedApps`. Turns off the scroll animation and MMF's acceleration (uses the macOS scroll speed instead), so each wheel tick scrolls like it would without MMF. Other scroll features like reverse direction stay active.
+    private(set) static var appDisablesSmoothing = false
+    @objc static func setAppDisablesSmoothing(_ disable: Bool) {
+        guard disable != appDisablesSmoothing else { return }
+        appDisablesSmoothing = disable
+        cache = nil
+    }
     @objc static func devToggles_deleteCache() { /// [May 2025] Added this function as a hack for DevToggles.m
         shared = ScrollConfig()
         cache = nil
@@ -212,6 +220,13 @@ import Cocoa
                 
                 /// Turn off fast scroll
                 new.fastScrollCurve = nil
+            }
+            
+            /// 3. Per-app exclusion of smooth scrolling
+            ///     Only when no modifier has set its own curve, so scroll-to-zoom, quick scroll, etc. keep working.
+            if ScrollConfig.appDisablesSmoothing && animationCurveOverride == nil {
+                animationCurveOverride = kMFScrollAnimationCurveNameNone
+                u_speed = kMFScrollSpeedSystem
             }
             
             /// Apply animationCurve override
